@@ -64,15 +64,16 @@ class ErrandOverlayController(private val context: Context) {
             gravity = Gravity.TOP or Gravity.START
         }
 
-        val composeView = ComposeView(context).apply {
-            if (context is LifecycleOwner) {
-                setViewTreeLifecycleOwner(context)
+        val currentContext = context
+        val composeView = ComposeView(currentContext).apply {
+            if (currentContext is LifecycleOwner) {
+                setViewTreeLifecycleOwner(currentContext)
             }
-            if (context is ViewModelStoreOwner) {
-                setViewTreeViewModelStoreOwner(context)
+            if (currentContext is ViewModelStoreOwner) {
+                setViewTreeViewModelStoreOwner(currentContext)
             }
-            if (context is SavedStateRegistryOwner) {
-                setViewTreeSavedStateRegistryOwner(context)
+            if (currentContext is SavedStateRegistryOwner) {
+                setViewTreeSavedStateRegistryOwner(currentContext)
             }
             setContent {
                 OverlayUI(

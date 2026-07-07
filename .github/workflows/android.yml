@@ -28,6 +28,11 @@ jobs:
         sed -i 's/\r$//' gradlew
         sed -i 's/\r$//' gradlew.bat
 
+    - name: Inject API Key
+      run: |
+        mkdir -p app/src/main/assets
+        echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > app/src/main/assets/env
+
     - name: Build with Gradle
       run: ./gradlew assembleDebug
 

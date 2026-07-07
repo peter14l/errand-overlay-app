@@ -29,11 +29,39 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import io.github.cdimascio.dotenv.dotenv
 
+
+
+class MyLifecycleOwner : LifecycleOwner {
+    private val registry = LifecycleRegistry(this)
+    init {
+        registry.currentState = Lifecycle.State.RESUMED
+    }
+    override val lifecycle: Lifecycle = registry
+}
+
+class MyViewModelStoreOwner : ViewModelStoreOwner {
+    private val store = ViewModelStore()
+    override val viewModelStore: ViewModelStore = store
+}
+
+class MySavedStateRegistryOwner(private val lifecycleOwner: LifecycleOwner) : SavedStateRegistryOwner {
+    private val controller = SavedStateRegistryController.create(this)
+    init {
+        controller.performRestore(null)
+    }
+    override val lifecycle: Lifecycle = lifecycleOwner.lifecycle
+    override val savedStateRegistry: SavedStateRegistry = controller.savedStateRegistry
+}
 
 class ErrandOverlayController(private val context: Context) {
 
@@ -64,17 +92,15 @@ class ErrandOverlayController(private val context: Context) {
             gravity = Gravity.TOP or Gravity.START
         }
 
+        val customLifecycleOwner = MyLifecycleOwner()
+        val customViewModelStoreOwner = MyViewModelStoreOwner()
+        val customSavedStateRegistryOwner = MySavedStateRegistryOwner(customLifecycleOwner)
+
         val currentContext = context
         val composeView = ComposeView(currentContext).apply {
-            if (currentContext is LifecycleOwner) {
-                setViewTreeLifecycleOwner(currentContext)
-            }
-            if (currentContext is ViewModelStoreOwner) {
-                setViewTreeViewModelStoreOwner(currentContext)
-            }
-            if (currentContext is SavedStateRegistryOwner) {
-                setViewTreeSavedStateRegistryOwner(currentContext)
-            }
+            setViewTreeLifecycleOwner(customLifecycleOwner)
+            setViewTreeViewModelStoreOwner(customViewModelStoreOwner)
+            setViewTreeSavedStateRegistryOwner(customSavedStateRegistryOwner)
             setContent {
                 OverlayUI(
                     state = currentState.value,

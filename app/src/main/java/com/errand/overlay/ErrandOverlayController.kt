@@ -28,16 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
 import io.github.cdimascio.dotenv.dotenv
+
 
 
 
@@ -52,15 +49,6 @@ class MyLifecycleOwner : LifecycleOwner {
 class MyViewModelStoreOwner : ViewModelStoreOwner {
     private val store = ViewModelStore()
     override val viewModelStore: ViewModelStore = store
-}
-
-class MySavedStateRegistryOwner(private val lifecycleOwner: LifecycleOwner) : SavedStateRegistryOwner {
-    private val controller = SavedStateRegistryController.create(this)
-    init {
-        controller.performRestore(null)
-    }
-    override val lifecycle: Lifecycle = lifecycleOwner.lifecycle
-    override val savedStateRegistry: SavedStateRegistry = controller.savedStateRegistry
 }
 
 class ErrandOverlayController(private val context: Context) {
@@ -94,13 +82,11 @@ class ErrandOverlayController(private val context: Context) {
 
         val customLifecycleOwner = MyLifecycleOwner()
         val customViewModelStoreOwner = MyViewModelStoreOwner()
-        val customSavedStateRegistryOwner = MySavedStateRegistryOwner(customLifecycleOwner)
 
         val currentContext = context
         val composeView = ComposeView(currentContext).apply {
             setViewTreeLifecycleOwner(customLifecycleOwner)
             setViewTreeViewModelStoreOwner(customViewModelStoreOwner)
-            setViewTreeSavedStateRegistryOwner(customSavedStateRegistryOwner)
             setContent {
                 OverlayUI(
                     state = currentState.value,

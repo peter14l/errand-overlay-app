@@ -26,7 +26,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistryOwner
 import io.github.cdimascio.dotenv.dotenv
+
 
 class ErrandOverlayController(private val context: Context) {
 
@@ -58,6 +65,15 @@ class ErrandOverlayController(private val context: Context) {
         }
 
         val composeView = ComposeView(context).apply {
+            if (context is LifecycleOwner) {
+                setViewTreeLifecycleOwner(context)
+            }
+            if (context is ViewModelStoreOwner) {
+                setViewTreeViewModelStoreOwner(context)
+            }
+            if (context is SavedStateRegistryOwner) {
+                setViewTreeSavedStateRegistryOwner(context)
+            }
             setContent {
                 OverlayUI(
                     state = currentState.value,

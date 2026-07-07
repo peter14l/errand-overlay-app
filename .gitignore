@@ -1,0 +1,28 @@
+# Gradle Build Cache / Android specific files
+.gradle/
+build/
+*.apk
+*.aar
+*.ap_
+*.der
+*.crt
+*.pem
+
+# Local configuration files
+local.properties
+.env
+.env.*
+
+# Keystore files
+*.jks
+*.keystore
+
+# Android Studio / IntelliJ files
+.idea/
+*.iml
+.cxx/
+capture.png
+
+# OS files
+.DS_Store
+Thumbs.db

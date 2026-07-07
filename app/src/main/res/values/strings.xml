@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Errand</string>
+    <string name="accessibility_service_description">Errand uses accessibility services to automate tasks such as ordering food from supported apps under user direction.</string>
+</resources>

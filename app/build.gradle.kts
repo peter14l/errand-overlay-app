@@ -3,6 +3,12 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+repositories {
+    google()
+    mavenCentral()
+}
+
+
 android {
     namespace = "com.errand.overlay"
     compileSdk = 34

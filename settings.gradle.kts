@@ -5,13 +5,7 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+// repositories will be defined at project level
 
 rootProject.name = "Errand"
 include(":app")

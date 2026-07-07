@@ -5,7 +5,7 @@ plugins {
 
 repositories {
     google()
-    mavenCentral()
+    maven { url = uri("https://repo1.maven.org/maven2/") }
 }
 
 
@@ -68,7 +68,7 @@ dependencies {
 
     // JNA / JNI or OkHttp can be added if needed. Let's use simple HttpURLConnection or OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.gson:gson:2.10.1")
+    implementation("com.google.code.gson:gson:2.10.1")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

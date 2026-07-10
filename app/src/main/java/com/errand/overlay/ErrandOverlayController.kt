@@ -17,6 +17,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,11 +30,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -338,95 +341,155 @@ class ErrandOverlayController(private val context: Context) {
 
 // ── Composable UI ──────────────────────────────────────────────────
 
+val LocalOverlayController = compositionLocalOf<ErrandOverlayController> { error("No overlay controller") }
+
 @Composable
 fun ErrandOverlayApp() {
     val controller = LocalOverlayController.current
-
     val state by controller.currentState
     val pillText by controller.currentPillText
     val isListening by controller.isListening
     val recognizedText by controller.recognizedText
 
-    val isMinimal = state == "Acting" || state == "PaymentHandoff"
+    val isActive = state == "Thinking" || state == "Acting" || state == "PaymentHandoff"
+    val glowColor = animateColorAsState(
+        targetValue = when (state) {
+            "Thinking" -> Color(0xFFB4A0FF)
+            "Acting" -> Color(0xFF8083FF)
+            "PaymentHandoff" -> Color(0xFFFFB783)
+            "Complete" -> Color(0xFF80FFB4)
+            else -> Color.Transparent
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "glow"
+    ).value
 
-    if (isMinimal) {
-        MinimalPill(
-            state = state,
-            pillText = pillText,
-            onStop = { controller.stopAgent() },
-            onPaymentDone = { controller.resumeAfterPayment() }
-        )
-    } else {
-        FullOverlay(
-            state = state,
-            pillText = pillText,
-            isListening = isListening,
-            recognizedText = recognizedText,
-            onClose = { controller.hideOverlay() },
-            onSubmitRequest = { controller.startAgent(it) },
-            onPause = { controller.stopAgent() },
-            onStartListening = { onResult -> controller.startListening(onResult) },
-            onStopListening = { controller.stopListening() }
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Animated edge shimmer when active
+        if (isActive || state == "Complete") {
+            EdgeShimmer(glowColor = glowColor)
+        }
+
+        when (state) {
+            "Idle" -> IdlePanel(
+                isListening = isListening,
+                recognizedText = recognizedText,
+                onClose = { controller.hideOverlay() },
+                onSubmit = { controller.startAgent(it) },
+                onStartListening = { cb -> controller.startListening(cb) },
+                onStopListening = { controller.stopListening() }
+            )
+            "Complete" -> {
+                CenterStatus(text = pillText, color = glowColor)
+            }
+            else -> ActivePill(
+                state = state,
+                pillText = pillText,
+                onStop = { controller.stopAgent() },
+                onPaymentDone = { controller.resumeAfterPayment() }
+            )
+        }
     }
 }
 
-// CompositionLocal to access the controller from composables
-val LocalOverlayController = compositionLocalOf<ErrandOverlayController> { error("No overlay controller") }
-
-// ── Full overlay (Idle / Thinking / Complete) ──────────────────────
+// ── Edge shimmer ───────────────────────────────────────────────────
 
 @Composable
-fun FullOverlay(
-    state: String,
-    pillText: String,
+fun EdgeShimmer(glowColor: Color) {
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val phase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "phase"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawBehind {
+                val w = size.width
+                val h = size.height
+                val edge = 3.dp.toPx()
+                val a = 0.7f
+
+                // Top — left to right
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        listOf(Color.Transparent, glowColor.copy(alpha = a), Color.Transparent),
+                        startX = phase * w * 2 - w, endX = phase * w * 2
+                    ),
+                    size = Size(w, edge)
+                )
+                // Bottom — right to left
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        listOf(Color.Transparent, glowColor.copy(alpha = a * 0.7f), Color.Transparent),
+                        startX = (1 - phase) * w * 2 - w, endX = (1 - phase) * w * 2
+                    ),
+                    size = Size(w, edge),
+                    topLeft = Offset(0f, h - edge)
+                )
+                // Left — top to bottom
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.Transparent, glowColor.copy(alpha = a * 0.85f), Color.Transparent),
+                        startY = phase * h * 2 - h, endY = phase * h * 2
+                    ),
+                    size = Size(edge, h)
+                )
+                // Right — bottom to top
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.Transparent, glowColor.copy(alpha = a * 0.6f), Color.Transparent),
+                        startY = (1 - phase) * h * 2 - h, endY = (1 - phase) * h * 2
+                    ),
+                    size = Size(edge, h),
+                    topLeft = Offset(w - edge, 0f)
+                )
+            }
+    )
+}
+
+// ── Idle panel (glassmorphism card) ────────────────────────────────
+
+@Composable
+fun IdlePanel(
     isListening: Boolean,
     recognizedText: String,
     onClose: () -> Unit,
-    onSubmitRequest: (String) -> Unit,
-    onPause: () -> Unit,
+    onSubmit: (String) -> Unit,
     onStartListening: (onResult: (String) -> Unit) -> Unit,
     onStopListening: () -> Unit
 ) {
     var inputText by remember { mutableStateOf("") }
 
-    // Sync recognized text into input
     LaunchedEffect(recognizedText) {
-        if (recognizedText.isNotBlank()) {
-            inputText = recognizedText
-        }
+        if (recognizedText.isNotBlank()) inputText = recognizedText
     }
 
-    val glowColor = when (state) {
-        "Thinking" -> Color(0xFFC0C1FF).copy(alpha = 0.6f)
-        "Complete" -> Color(0xFF80FFB4)
-        else -> Color.Transparent
-    }
-
+    // Dim background
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0F10).copy(alpha = if (state == "Idle") 0.85f else 0.3f))
-            .border(
-                width = if (glowColor != Color.Transparent) 3.dp else 0.dp,
-                brush = Brush.verticalGradient(listOf(glowColor, Color.Transparent)),
-                shape = RoundedCornerShape(0.dp)
-            )
+            .background(Color.Black.copy(alpha = 0.55f))
     ) {
+        // Centered glassmorphism card
         Column(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 40.dp)
+                .align(Alignment.Center)
                 .width(340.dp)
-                .background(
-                    color = Color(0xFF1D2022).copy(alpha = 0.95f),
-                    shape = RoundedCornerShape(24.dp)
-                )
-                .border(1.dp, Color(0xFFFFFFFF).copy(alpha = 0.1f), RoundedCornerShape(24.dp))
-                .padding(16.dp),
+                .shadow(24.dp, RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header row
+            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -434,217 +497,251 @@ fun FullOverlay(
             ) {
                 Text(
                     text = "ERRAND",
-                    color = Color(0xFFC0C1FF),
-                    fontSize = 14.sp,
+                    color = Color(0xFFB4A0FF),
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.SansSerif
+                    letterSpacing = 3.sp
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state != "Idle") {
-                        Text(
-                            text = "Stop",
-                            color = Color(0xFFFFB4AB),
-                            fontSize = 12.sp,
-                            modifier = Modifier.clickable { onPause() }
+                Text(
+                    text = "\u2715",
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontSize = 16.sp,
+                    modifier = Modifier.clickable { onClose() }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Prompt
+            Text(
+                text = "What can Errand do for you?",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Light
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Glass input + mic
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Order pizza from Swiggy...", color = Color.White.copy(alpha = 0.3f)) },
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White.copy(alpha = 0.8f),
+                        cursorColor = Color(0xFFB4A0FF),
+                        focusedBorderColor = Color(0xFFB4A0FF).copy(alpha = 0.5f),
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.1f)
+                    ),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
+                    maxLines = 3
+                )
+                // Mic — glassmorphism circle
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isListening) Color(0xFFFF5252).copy(alpha = 0.8f)
+                            else Color.White.copy(alpha = 0.08f)
                         )
+                        .border(
+                            1.dp,
+                            if (isListening) Color(0xFFFF5252).copy(alpha = 0.6f)
+                            else Color.White.copy(alpha = 0.15f),
+                            CircleShape
+                        )
+                        .clickable {
+                            if (isListening) onStopListening()
+                            else onStartListening { text -> inputText = text }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isListening) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "mic")
+                        val pulse by infiniteTransition.animateFloat(
+                            initialValue = 0.4f, targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                tween(600, easing = FastOutSlowInEasing),
+                                RepeatMode.Reverse
+                            ), label = "pulse"
+                        )
+                        Text("\u23FA", color = Color.White.copy(alpha = pulse), fontSize = 20.sp)
+                    } else {
+                        Text("\u23FA", color = Color.White.copy(alpha = 0.6f), fontSize = 20.sp)
                     }
-                    Text(
-                        text = "Close",
-                        color = Color(0xFFFFB4AB),
-                        fontSize = 12.sp,
-                        modifier = Modifier.clickable { onClose() }
-                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            when (state) {
-                "Idle" -> {
-                    // Text input + mic
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = inputText,
-                            onValueChange = { inputText = it },
-                            label = { Text("What should Errand do?", color = Color(0xFF908FA0)) },
-                            modifier = Modifier.weight(1f),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color(0xFFE0E3E5),
-                                unfocusedTextColor = Color(0xFFE0E3E5),
-                                focusedBorderColor = Color(0xFFC0C1FF),
-                                unfocusedBorderColor = Color(0xFF464554)
-                            ),
-                            maxLines = 3
+            // Execute button — gradient glass
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0xFF8083FF), Color(0xFFB4A0FF))
                         )
-                        // Mic button
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(if (isListening) Color(0xFFFF5252) else Color(0xFF3E495D))
-                                .clickable {
-                                    if (isListening) {
-                                        onStopListening()
-                                    } else {
-                                        onStartListening { text -> inputText = text }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isListening) {
-                                // Animated pulsing mic
-                                val infiniteTransition = rememberInfiniteTransition(label = "mic")
-                                val alpha by infiniteTransition.animateFloat(
-                                    initialValue = 0.4f, targetValue = 1f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(600, easing = FastOutSlowInEasing),
-                                        repeatMode = RepeatMode.Reverse
-                                    ), label = "micAlpha"
-                                )
-                                Text(
-                                    text = "\u23FA",
-                                    color = Color.White.copy(alpha = alpha),
-                                    fontSize = 20.sp
-                                )
-                            } else {
-                                Text(
-                                    text = "\u23FA",
-                                    color = Color(0xFFBCC7DE),
-                                    fontSize = 20.sp
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(
-                        onClick = {
-                            if (inputText.isNotBlank()) onSubmitRequest(inputText)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8083FF)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Execute Task", color = Color(0xFF0D0096))
-                    }
-                }
-
-                "Thinking" -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = Color(0xFFC0C1FF),
-                            strokeWidth = 2.dp
-                        )
-                        Text(
-                            text = pillText,
-                            color = Color(0xFFE0E3E5),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = onPause,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3E495D)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Take Over (Pause)", color = Color(0xFFBCC7DE))
-                    }
-                }
-
-                else -> {
-                    // Complete / other states
-                    Text(
-                        text = pillText,
-                        color = Color(0xFFC0C1FF),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
                     )
-                }
+                    .clickable(enabled = inputText.isNotBlank()) { onSubmit(inputText) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Execute",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.sp
+                )
             }
         }
     }
 }
 
-// ── Minimal pill (Acting / PaymentHandoff) ─────────────────────────
+// ── Active pill (Thinking / Acting / PaymentHandoff) ───────────────
 
 @Composable
-fun MinimalPill(
+fun ActivePill(
     state: String,
     pillText: String,
     onStop: () -> Unit,
     onPaymentDone: () -> Unit
 ) {
-    val borderColor = when (state) {
-        "Acting" -> Color(0xFFC0C1FF).copy(alpha = 0.5f)
+    val isActive = state == "Acting" || state == "Thinking"
+    val accentColor = when (state) {
+        "Acting" -> Color(0xFF8083FF)
+        "Thinking" -> Color(0xFFB4A0FF)
         "PaymentHandoff" -> Color(0xFFFFB783)
-        else -> Color.Transparent
+        else -> Color.Gray
     }
 
-    // Floating pill — top-right corner, no full-screen touch-consuming box
-    // With FLAG_NOT_TOUCH_MODAL, touches on transparent areas pass through to the app below.
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        // Glassmorphism pill
         Row(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 48.dp, end = 16.dp)
-                .shadow(8.dp, RoundedCornerShape(20.dp))
-                .background(
-                    color = Color(0xFF1D2022).copy(alpha = 0.95f),
-                    shape = RoundedCornerShape(20.dp)
-                )
-                .border(1.dp, borderColor, RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(bottom = 56.dp)
+                .shadow(12.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color.Black.copy(alpha = 0.5f))
+                .border(1.dp, accentColor.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            val dotColor = when (state) {
-                "Acting" -> Color(0xFFC0C1FF)
-                "PaymentHandoff" -> Color(0xFFFFB783)
-                else -> Color.Gray
-            }
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(dotColor)
-            )
+            // Waveform
+            WaveformIndicator(color = accentColor, isActive = isActive)
 
+            // Status text
             Text(
                 text = pillText,
-                color = Color(0xFFE0E3E5),
-                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                maxLines = 1
+                maxLines = 1,
+                modifier = Modifier.widthIn(max = 180.dp)
             )
 
             if (state == "PaymentHandoff") {
-                Button(
-                    onClick = onPaymentDone,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF80FFB4)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(28.dp)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF80FFB4).copy(alpha = 0.9f))
+                        .clickable { onPaymentDone() }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text("I'm Done", color = Color(0xFF0D0096), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "I'm Done",
+                        color = Color(0xFF0D0096),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 
+            // Stop
             Text(
-                text = "×",
-                color = Color(0xFFFFB4AB),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                "\u2715",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 14.sp,
                 modifier = Modifier.clickable { onStop() }
             )
         }
+    }
+}
+
+// ── Waveform indicator ─────────────────────────────────────────────
+
+@Composable
+fun WaveformIndicator(color: Color, isActive: Boolean) {
+    val barCount = 5
+    val infiniteTransition = rememberInfiniteTransition(label = "wave")
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.height(20.dp)
+    ) {
+        repeat(barCount) { index ->
+            val targetHeight = if (isActive) (6 + (index % 3) * 5).toFloat() else 3f
+            val animHeight by infiniteTransition.animateFloat(
+                initialValue = 3f,
+                targetValue = targetHeight,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 280 + index * 70,
+                        easing = FastOutSlowInEasing
+                    ),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "bar$index"
+            )
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(animHeight.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (isActive) color else color.copy(alpha = 0.4f))
+            )
+        }
+    }
+}
+
+// ── Center status (Complete) ───────────────────────────────────────
+
+@Composable
+fun CenterStatus(text: String, color: Color) {
+    val infiniteTransition = rememberInfiniteTransition(label = "complete")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(800, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ), label = "alpha"
+    )
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = color.copy(alpha = alpha),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Light,
+            letterSpacing = 1.sp
+        )
     }
 }

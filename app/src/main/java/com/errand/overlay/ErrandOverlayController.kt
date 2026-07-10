@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
@@ -20,17 +21,13 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -98,12 +95,12 @@ class ErrandOverlayController(private val context: Context) {
         ignoreIfMissing = true
     }
 
-    // Overlay state
-    private var currentState = mutableStateOf("Idle")
-    private var currentPillText = mutableStateOf("Ready")
-    private var activeRequest = mutableStateOf("")
-    private var isListening = mutableStateOf(false)
-    private var recognizedText = mutableStateOf("")
+    // Overlay state (internal — accessed by composable via CompositionLocal)
+    internal var currentState = mutableStateOf("Idle")
+    internal var currentPillText = mutableStateOf("Ready")
+    internal var activeRequest = mutableStateOf("")
+    internal var isListening = mutableStateOf(false)
+    internal var recognizedText = mutableStateOf("")
 
     // Voice
     private var speechRecognizer: SpeechRecognizer? = null
@@ -508,18 +505,16 @@ fun FullOverlay(
                                         repeatMode = RepeatMode.Reverse
                                     ), label = "micAlpha"
                                 )
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Stop listening",
-                                    tint = Color.White.copy(alpha = alpha),
-                                    modifier = Modifier.size(24.dp)
+                                Text(
+                                    text = "\u23FA",
+                                    color = Color.White.copy(alpha = alpha),
+                                    fontSize = 20.sp
                                 )
                             } else {
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Start listening",
-                                    tint = Color(0xFFBCC7DE),
-                                    modifier = Modifier.size(24.dp)
+                                Text(
+                                    text = "\u23FA",
+                                    color = Color(0xFFBCC7DE),
+                                    fontSize = 20.sp
                                 )
                             }
                         }

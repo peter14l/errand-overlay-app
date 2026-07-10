@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.view.accessibility.AccessibilityNodeInfo
-import android.os.Bundle
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -129,12 +128,10 @@ class ErrandAccessibilityService : AccessibilityService() {
     // ── Long click ──────────────────────────────────────────────────
 
     fun performLongClick(node: AccessibilityNodeInfo): Boolean {
-        val args = Bundle()
-        args.putLong(AccessibilityNodeInfo.ACTION_ARGUMENT_LONG_CLICK_TIME_MILLIS, 500L)
         var temp: AccessibilityNodeInfo? = node
         while (temp != null) {
             if (temp.isLongClickable) {
-                return temp.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, args)
+                return temp.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
             }
             temp = temp.parent
         }

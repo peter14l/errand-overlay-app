@@ -239,6 +239,23 @@ class ErrandAccessibilityService : AccessibilityService() {
     fun performRecents(): Boolean {
         return performGlobalAction(GLOBAL_ACTION_RECENTS)
     }
+
+    // ── App launching ───────────────────────────────────────────────
+
+    fun launchApp(packageName: String): Boolean {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        if (launchIntent != null) {
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            return try {
+                startActivity(launchIntent)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch $packageName", e)
+                false
+            }
+        }
+        return false
+    }
 }
 
 data class AccessibilityNodeInfoCompat(

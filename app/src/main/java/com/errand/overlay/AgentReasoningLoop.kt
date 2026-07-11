@@ -26,10 +26,33 @@ class AgentReasoningLoop(private val context: Context) {
         private val KNOWN_APPS = mapOf(
             "com.Swiggy.agent" to "Swiggy",
             "in.swiggy.agent" to "Swiggy",
+            "com.Swiggy" to "Swiggy",
             "com.zomato.agent" to "Zomato",
             "com.zomato" to "Zomato",
             "com.zepto" to "Zepto",
             "com.blinkit" to "Blinkit"
+        )
+
+        // Reverse map: friendly name → package name (for launching)
+        private val APP_PACKAGES = mapOf(
+            "Swiggy" to "com.Swiggy",
+            "Zomato" to "com.zomato",
+            "Zepto" to "com.zepto",
+            "Blinkit" to "com.blinkit"
+        )
+
+        // Keywords in user request → target app
+        private val REQUEST_APP_HINTS = mapOf(
+            "swiggy" to "Swiggy",
+            "zomato" to "Zomato",
+            "zepto" to "Zepto",
+            "blinkit" to "Blinkit",
+            "pizza" to "Swiggy",
+            "burger" to "Swiggy",
+            "food" to "Swiggy",
+            "restaurant" to "Swiggy",
+            "grocery" to "Zepto",
+            "groceries" to "Zepto"
         )
 
         private val DOMAIN_HINTS = mapOf(
@@ -89,6 +112,25 @@ class AgentReasoningLoop(private val context: Context) {
         history.add("User request: $userRequest")
 
         try {
+            // Auto-navigate to target app if not already there
+            val service = ErrandAccessibilityService.getInstance()
+            if (service != null) {
+                val targetApp = detectTargetApp(userRequest)
+                val currentPkg = service.getForegroundApp()
+                val currentApp = KNOWN_APPS[currentPkg] ?: ""
+
+                if (targetApp != null && currentApp != targetApp) {
+                    mainHandler.post { callback?.onStateChanged("Thinking", "Opening $targetApp...") }
+                    service.performHome()
+                    Thread.sleep(800)
+                    val pkg = APP_PACKAGES[targetApp]
+                    if (pkg != null) {
+                        service.launchApp(pkg)
+                        Thread.sleep(3000) // wait for app to load
+                    }
+                }
+            }
+
             while (isRunning) {
                 if (step > MAX_STEPS) {
                     mainHandler.post { callback?.onError("Reached max steps ($MAX_STEPS). Task may be stuck.") }
@@ -216,6 +258,13 @@ class AgentReasoningLoop(private val context: Context) {
                     "back" -> {
                         success = service.performBack()
                     }
+                    "home" -> {
+                        success = service.performHome()
+                    }
+                    "launch_app" -> {
+                        val pkg = nextAction.get("package")?.asString ?: ""
+                        success = service.launchApp(pkg)
+                    }
                     "long_click" -> {
                         val index = nextAction.get("index")?.asInt ?: -1
                         if (index in freshNodes.indices) {
@@ -245,6 +294,15 @@ class AgentReasoningLoop(private val context: Context) {
         }
     }
 
+    private fun detectTargetApp(userRequest: String): String? {
+        val lower = userRequest.lowercase()
+        // Check explicit app names first
+        for ((keyword, appName) in REQUEST_APP_HINTS) {
+            if (lower.contains(keyword)) return appName
+        }
+        return null
+    }
+
     private fun buildPrompt(
         userRequest: String,
         appName: String,
@@ -268,12 +326,24 @@ ${history.joinToString("\n")}
 
 **Your job:** Decide the NEXT SINGLE ACTION to progress toward the user's goal.
 
+**NAVIGATION RULE — THIS IS CRITICAL:**
+If the current app is NOT the target app for the user's request, you MUST navigate there first:
+1. Use "home" to go to the Android home screen.
+2. Then use "launch_app" with the correct package name to open the target app.
+3. Wait for it to load, then proceed with the task.
+
+Known package names: Swiggy → com.Swiggy, Zomato → com.zomato, Zepto → com.zepto, Blinkit → com.blinkit
+
+Do NOT try to interact with UI elements that don't exist on the current screen. If you're on the home screen or the wrong app, navigate first.
+
 **Available actions:**
 - "click" — Tap a UI element. Required: "index" (node index from screen).
 - "type" — Enter text into an editable field. Required: "index" (editable node), "text".
 - "scroll_down" — Scroll down the page. No extra params.
 - "scroll_up" — Scroll up the page. No extra params.
 - "back" — Press the Android back button. No extra params.
+- "home" — Go to the Android home screen. No extra params.
+- "launch_app" — Open an app by package name. Required: "package" (e.g. "com.Swiggy").
 - "long_click" — Long-press a UI element. Required: "index".
 - "swipe" — Swipe gesture. Required: "direction" (one of: "left", "right", "up", "down"). Optional: "index" (element to swipe on).
 - "handoff_payment" — Ask user to complete payment manually. Use when you reach a payment screen.
@@ -287,6 +357,7 @@ ${history.joinToString("\n")}
 4. If an action failed, try a different approach or element.
 5. When the order is placed / item is in cart and you reach payment, use "handoff_payment".
 6. Use "complete" only when the ENTIRE user request is fulfilled.
+7. ALWAYS navigate to the correct app before attempting any task-specific actions.
 
 Respond with JSON only. No markdown.
 {
@@ -295,6 +366,7 @@ Respond with JSON only. No markdown.
   "index": 0,
   "text": "",
   "direction": "",
+  "package": "",
   "pillText": "Short status (2-4 words)"
 }
 """.trimIndent()

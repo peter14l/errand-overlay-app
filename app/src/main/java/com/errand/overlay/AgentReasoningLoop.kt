@@ -71,12 +71,14 @@ class AgentReasoningLoop(private val context: Context) {
         fun onError(error: String)
         fun onTaskComplete()
         fun onPaymentHandoff(pillText: String)
+        fun onAskUser(question: String)
     }
 
     private var callback: Callback? = null
     @Volatile private var isRunning = false
     @Volatile private var isPaused = false
     private val pauseLock = Object()
+    @Volatile private var userAnswer: String? = null
 
     fun setCallback(callback: Callback) {
         this.callback = callback
@@ -100,6 +102,14 @@ class AgentReasoningLoop(private val context: Context) {
     }
 
     fun resumeAfterPayment() {
+        isPaused = false
+        synchronized(pauseLock) {
+            pauseLock.notifyAll()
+        }
+    }
+
+    fun answerUser(answer: String) {
+        userAnswer = answer
         isPaused = false
         synchronized(pauseLock) {
             pauseLock.notifyAll()
@@ -226,6 +236,27 @@ class AgentReasoningLoop(private val context: Context) {
                     continue
                 }
 
+                if (action == "ask_user") {
+                    nodes.recycleAll()
+                    val question = nextAction.get("question")?.asString ?: "I need your input."
+                    isPaused = true
+                    userAnswer = null
+                    mainHandler.post { callback?.onAskUser(question) }
+                    // Wait for user to answer
+                    synchronized(pauseLock) {
+                        while (isPaused && isRunning) {
+                            pauseLock.wait()
+                        }
+                    }
+                    if (!isRunning) break
+                    // Add user's answer to history so LLM sees it
+                    val answer = userAnswer ?: "No answer provided"
+                    history.add("User answer: $answer")
+                    userAnswer = null
+                    step++
+                    continue
+                }
+
                 mainHandler.post { callback?.onStateChanged("Acting", pillText) }
 
                 // Re-fetch hierarchy after LLM call
@@ -310,11 +341,13 @@ class AgentReasoningLoop(private val context: Context) {
         screenText: String,
         history: List<String>
     ): String {
+        val preferences = extractPreferences(userRequest)
         return """
 You are Errand, an Android task automation agent. You interact with apps by reading their accessibility tree and performing actions.
 
 **Current app:** $appName
 **User's goal:** "$userRequest"
+**User preferences:** $preferences
 
 **Domain context:** $domainHint
 
@@ -336,6 +369,20 @@ Known package names: Swiggy → com.Swiggy, Zomato → com.zomato, Zepto → com
 
 Do NOT try to interact with UI elements that don't exist on the current screen. If you're on the home screen or the wrong app, navigate first.
 
+**SEARCH FLOW (for food/grocery apps):**
+1. Find the search bar (look for elements with text like "Search", "Search for food", "Search restaurants", or editable fields near the top).
+2. Click the search bar (use "click" action).
+3. Wait one step, then type the item name (use "type" action with the search term, e.g. "pizza", "biryani", "milk").
+4. Wait for results to load, then browse and select.
+
+**SELECTION RULES (when multiple results appear):**
+- If the user mentioned a specific restaurant name (e.g. "from Domino's"), find and click that one.
+- If the user said "cheapest" or "budget", pick the option with the lowest visible price.
+- If the user said "best" or "highest rated", pick the option with the highest rating (e.g. 4.5★ > 4.2★).
+- If the user said "fastest" or "nearest", pick the option with the lowest delivery time.
+- If no preference is stated, pick the FIRST result (the app's default ranking is usually most relevant).
+- Do NOT scroll past the first 3-4 options unless none match. Quick decisions are better.
+
 **Available actions:**
 - "click" — Tap a UI element. Required: "index" (node index from screen).
 - "type" — Enter text into an editable field. Required: "index" (editable node), "text".
@@ -349,6 +396,7 @@ Do NOT try to interact with UI elements that don't exist on the current screen. 
 - "handoff_payment" — Ask user to complete payment manually. Use when you reach a payment screen.
 - "complete" — Task is successfully done. Use when the final goal is achieved.
 - "fail" — Task cannot be completed. Include reason in "thought".
+- "ask_user" — Ask the user a clarifying question. Required: "question". Use when you're genuinely stuck and need user input (e.g. "Which restaurant?"). Pause and wait for response.
 
 **Rules:**
 1. Always pick the SINGLE next action. Do not bundle multiple actions.
@@ -358,6 +406,8 @@ Do NOT try to interact with UI elements that don't exist on the current screen. 
 5. When the order is placed / item is in cart and you reach payment, use "handoff_payment".
 6. Use "complete" only when the ENTIRE user request is fulfilled.
 7. ALWAYS navigate to the correct app before attempting any task-specific actions.
+8. Be decisive. Pick a restaurant quickly based on the selection rules above. Do not overthink.
+9. Only use "ask_user" as a LAST RESORT after you've tried everything else.
 
 Respond with JSON only. No markdown.
 {
@@ -367,9 +417,38 @@ Respond with JSON only. No markdown.
   "text": "",
   "direction": "",
   "package": "",
+  "question": "",
   "pillText": "Short status (2-4 words)"
 }
 """.trimIndent()
+    }
+
+    private fun extractPreferences(userRequest: String): String {
+        val lower = userRequest.lowercase()
+        val prefs = mutableListOf<String>()
+
+        if (lower.contains("cheapest") || lower.contains("budget") || lower.contains("low price"))
+            prefs.add("price-sensitive: pick the cheapest option")
+        if (lower.contains("best") || lower.contains("highest rated") || lower.contains("top rated"))
+            prefs.add("quality-focused: pick the highest rated option")
+        if (lower.contains("fastest") || lower.contains("quick") || lower.contains("nearest"))
+            prefs.add("speed-focused: pick the fastest delivery option")
+        if (lower.contains("vegetarian") || lower.contains("veg "))
+            prefs.add("vegetarian only")
+        if (lower.contains("non-veg") || lower.contains("non veg") || lower.contains("chicken") || lower.contains("meat"))
+            prefs.add("non-vegetarian preferred")
+
+        // Check for specific restaurant names
+        val restaurantNames = listOf("domino", "pizza hut", "mcdonald", "kfc", "subway", "starbucks",
+            "burger king", "chaayos", "faasos", "behrouz", "oven story", "sweet truth", "theobroma")
+        for (name in restaurantNames) {
+            if (lower.contains(name)) {
+                prefs.add("specific restaurant: $name")
+                break
+            }
+        }
+
+        return if (prefs.isEmpty()) "none stated — use app's default ranking" else prefs.joinToString("; ")
     }
 
     private fun queryGemini(prompt: String, apiKey: String): JsonObject? {

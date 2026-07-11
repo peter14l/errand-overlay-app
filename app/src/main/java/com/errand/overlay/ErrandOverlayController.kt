@@ -105,6 +105,7 @@ class ErrandOverlayController(private val context: Context) {
     internal var activeRequest = mutableStateOf("")
     internal var isListening = mutableStateOf(false)
     internal var recognizedText = mutableStateOf("")
+    internal var askQuestion = mutableStateOf("")
 
     // Voice
     private var speechRecognizer: SpeechRecognizer? = null
@@ -322,6 +323,14 @@ class ErrandOverlayController(private val context: Context) {
                         speak("Payment ready. Please complete payment manually.")
                     }
                 }
+
+                override fun onAskUser(question: String) {
+                    mainHandler.post {
+                        currentState.value = "AskUser"
+                        askQuestion.value = question
+                        setOverlayMode(false) // full overlay so user can type answer
+                    }
+                }
             })
             startTask(request, geminiKey)
         }
@@ -340,6 +349,14 @@ class ErrandOverlayController(private val context: Context) {
         currentPillText.value = "Resuming..."
         setOverlayMode(false)
         reasoningLoop?.resumeAfterPayment()
+    }
+
+    fun submitAnswer(answer: String) {
+        currentState.value = "Thinking"
+        currentPillText.value = "Thinking..."
+        askQuestion.value = ""
+        setOverlayMode(false)
+        reasoningLoop?.answerUser(answer)
     }
 }
 
@@ -369,6 +386,8 @@ fun ErrandOverlayApp() {
 
     val showGlow = state != "Idle"
     val isError = state == "Error"
+    val isAskUser = state == "AskUser"
+    val questionText by controller.askQuestion
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Soft edge glow — the only visual during active states
@@ -378,6 +397,11 @@ fun ErrandOverlayApp() {
             isError -> ErrorOverlay(
                 errorText = pillText,
                 onDismiss = { controller.stopAgent() }
+            )
+            isAskUser -> AskUserOverlay(
+                question = questionText,
+                onAnswer = { controller.submitAnswer(it) },
+                onStop = { controller.stopAgent() }
             )
             state == "Idle" -> IdleBar(
                 isListening = isListening,
@@ -523,6 +547,103 @@ fun ErrorOverlay(errorText: String, onDismiss: () -> Unit) {
             modifier = Modifier.padding(horizontal = 48.dp),
             lineHeight = 22.sp
         )
+    }
+}
+
+// ── Ask user overlay — question + input at bottom ──────────────────
+
+@Composable
+fun AskUserOverlay(
+    question: String,
+    onAnswer: (String) -> Unit,
+    onStop: () -> Unit
+) {
+    var answer by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        // Dismiss × top-right
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 40.dp, end = 20.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.3f))
+                .clickable { onStop() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("\u2715", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        }
+
+        // Question text
+        Text(
+            text = question,
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 16.sp,
+            modifier = Modifier
+                .padding(horizontal = 48.dp)
+                .align(Alignment.Center),
+            lineHeight = 24.sp
+        )
+
+        // Answer input bar at bottom
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 20.dp, end = 20.dp, bottom = 36.dp)
+                .fillMaxWidth()
+                .height(56.dp)
+                .shadow(16.dp, RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.Black.copy(alpha = 0.45f))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
+                .padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BasicTextField(
+                value = answer,
+                onValueChange = { answer = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp),
+                textStyle = LocalTextStyle.current.copy(
+                    color = Color.White,
+                    fontSize = 15.sp
+                ),
+                cursorBrush = Brush.verticalGradient(
+                    listOf(Color(0xFFB4A0FF), Color(0xFFB4A0FF))
+                ),
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (answer.isEmpty()) {
+                            Text(
+                                "Type your answer...",
+                                color = Color.White.copy(alpha = 0.3f),
+                                fontSize = 15.sp
+                            )
+                        }
+                        innerTextField()
+                    }
+                }
+            )
+
+            if (answer.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .padding(4.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF8083FF))
+                        .clickable { onAnswer(answer) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("\u25B6", color = Color.White, fontSize = 14.sp)
+                }
+            }
+        }
     }
 }
 

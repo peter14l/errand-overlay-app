@@ -134,6 +134,9 @@ class ErrandOverlayController(private val context: Context) {
     fun showOverlay() {
         if (overlayView != null) return
 
+        ErrandAccessibilityService.getInstance()?.registerOverlayController(this)
+        ErrandAccessibilityService.getInstance()?.stopWakeWordListening()
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -202,6 +205,9 @@ class ErrandOverlayController(private val context: Context) {
         currentState.value = "Idle"
         currentPillText.value = "Ready"
         activeRequest.value = ""
+
+        ErrandAccessibilityService.getInstance()?.unregisterOverlayController()
+        ErrandAccessibilityService.getInstance()?.startWakeWordListening()
     }
 
     // ── Overlay mode switching (full → minimal) ─────────────────────
@@ -591,6 +597,27 @@ fun AskUserOverlay(
 ) {
     var answer by remember { mutableStateOf("") }
 
+    val infiniteTransition = rememberInfiniteTransition(label = "borderGlow")
+    val xOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "x"
+    )
+    val gradientBrush = Brush.linearGradient(
+        colors = listOf(
+            Color(0xFF8083FF),
+            Color(0xFFB4A0FF),
+            Color(0xFFFFB783),
+            Color(0xFF8083FF)
+        ),
+        start = Offset(xOffset, 0f),
+        end = Offset(xOffset + 300f, 300f)
+    )
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -621,7 +648,7 @@ fun AskUserOverlay(
         )
 
         // Answer input bar at bottom
-        Row(
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(start = 20.dp, end = 20.dp, bottom = 36.dp)
@@ -629,12 +656,20 @@ fun AskUserOverlay(
                 .height(56.dp)
                 .shadow(16.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
-                .backgroundBlur(24f)
-                .background(Color.Black.copy(alpha = 0.45f))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
-                .padding(start = 16.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .border(1.5.dp, gradientBrush, RoundedCornerShape(28.dp))
         ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .backgroundBlur(24f)
+                    .background(Color.Black.copy(alpha = 0.45f))
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             BasicTextField(
                 value = answer,
                 onValueChange = { answer = it },
@@ -675,6 +710,7 @@ fun AskUserOverlay(
                     Text("\u25B6", color = Color.White, fontSize = 14.sp)
                 }
             }
+            }
         }
     }
 }
@@ -698,6 +734,27 @@ fun IdleBar(
         if (recognizedText.isNotBlank()) inputText = recognizedText
     }
 
+    val infiniteTransition = rememberInfiniteTransition(label = "borderGlow")
+    val xOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "x"
+    )
+    val gradientBrush = Brush.linearGradient(
+        colors = listOf(
+            Color(0xFF8083FF),
+            Color(0xFFB4A0FF),
+            Color(0xFFFFB783),
+            Color(0xFF8083FF)
+        ),
+        start = Offset(xOffset, 0f),
+        end = Offset(xOffset + 300f, 300f)
+    )
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.BottomCenter
@@ -717,19 +774,27 @@ fun IdleBar(
         }
 
         // Floating input bar
-        Row(
+        Box(
             modifier = Modifier
                 .padding(start = 20.dp, end = 20.dp, bottom = 36.dp)
                 .fillMaxWidth()
                 .height(56.dp)
                 .shadow(16.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
-                .backgroundBlur(24f)
-                .background(Color.Black.copy(alpha = 0.45f))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
-                .padding(start = 4.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .border(1.5.dp, gradientBrush, RoundedCornerShape(28.dp))
         ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .backgroundBlur(24f)
+                    .background(Color.Black.copy(alpha = 0.45f))
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 4.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             // Text input — transparent, no borders
             androidx.compose.foundation.text.BasicTextField(
                 value = inputText,
@@ -800,6 +865,7 @@ fun IdleBar(
                     Text("\u25B6", color = Color.White, fontSize = 14.sp)
                 }
             }
+            }
         }
     }
 }
@@ -822,18 +888,48 @@ fun FloatingCapsule(
         else -> Color.Gray
     }
 
-    Row(
+    val infiniteTransition = rememberInfiniteTransition(label = "borderGlow")
+    val xOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "x"
+    )
+    val gradientBrush = Brush.linearGradient(
+        colors = listOf(
+            Color(0xFF8083FF),
+            Color(0xFFB4A0FF),
+            Color(0xFFFFB783),
+            Color(0xFF8083FF)
+        ),
+        start = Offset(xOffset, 0f),
+        end = Offset(xOffset + 300f, 300f)
+    )
+
+    Box(
         modifier = Modifier
             .padding(top = 40.dp, end = 16.dp)
             .height(44.dp)
             .shadow(16.dp, RoundedCornerShape(22.dp))
             .clip(RoundedCornerShape(22.dp))
-            .backgroundBlur(20f)
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(start = 14.dp, end = 6.dp, top = 0.dp, bottom = 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .border(1.5.dp, gradientBrush, RoundedCornerShape(22.dp))
     ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .backgroundBlur(20f)
+                .background(Color.Black.copy(alpha = 0.55f))
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(start = 14.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
         // Mini waveform
         MiniWaveform(color = accent, isActive = state != "Complete")
 
@@ -870,6 +966,7 @@ fun FloatingCapsule(
             contentAlignment = Alignment.Center
         ) {
             Text("\u2715", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+        }
         }
     }
 }

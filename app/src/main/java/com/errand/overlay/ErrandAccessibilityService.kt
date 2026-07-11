@@ -18,6 +18,121 @@ class ErrandAccessibilityService : AccessibilityService() {
         fun getInstance(): ErrandAccessibilityService? = instance
     }
 
+    private var speechRecognizer: android.speech.SpeechRecognizer? = null
+    private var isWakeupListening = false
+    private var overlayController: ErrandOverlayController? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    fun registerOverlayController(controller: ErrandOverlayController) {
+        this.overlayController = controller
+    }
+
+    fun unregisterOverlayController() {
+        this.overlayController = null
+    }
+
+    fun startWakeWordListening() {
+        mainHandler.post {
+            if (isWakeupListening) return@post
+            try {
+                if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
+                    Log.w(TAG, "Speech recognition not available")
+                    return@post
+                }
+                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                        this,
+                        android.Manifest.permission.RECORD_AUDIO
+                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    Log.w(TAG, "Audio permission not granted for wake word")
+                    return@post
+                }
+
+                if (speechRecognizer == null) {
+                    speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+                }
+
+                val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(
+                        android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                        android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                    )
+                    putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                }
+
+                speechRecognizer?.setRecognitionListener(object : android.speech.RecognitionListener {
+                    override fun onReadyForSpeech(params: android.os.Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onError(error: Int) {
+                        Log.e(TAG, "Wake word recognizer error: $error")
+                        isWakeupListening = false
+                        // Restart after delay
+                        mainHandler.postDelayed({ startWakeWordListening() }, 1500)
+                    }
+
+                    override fun onResults(results: android.os.Bundle?) {
+                        isWakeupListening = false
+                        val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                        val text = matches?.firstOrNull()?.lowercase() ?: ""
+                        if (text.contains("errand")) {
+                            triggerOverlay()
+                        }
+                        startWakeWordListening()
+                    }
+
+                    override fun onPartialResults(partialResults: android.os.Bundle?) {
+                        val matches = partialResults?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                        val text = matches?.firstOrNull()?.lowercase() ?: ""
+                        if (text.contains("errand") || text.contains("hey errand")) {
+                            triggerOverlay()
+                        }
+                    }
+
+                    override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+                })
+
+                isWakeupListening = true
+                speechRecognizer?.startListening(intent)
+                Log.i(TAG, "Wake word listening started")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting wake word", e)
+                isWakeupListening = false
+            }
+        }
+    }
+
+    fun stopWakeWordListening() {
+        mainHandler.post {
+            try {
+                isWakeupListening = false
+                speechRecognizer?.stopListening()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+                Log.i(TAG, "Wake word listening stopped")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping wake word", e)
+            }
+        }
+    }
+
+    private fun triggerOverlay() {
+        mainHandler.post {
+            val controller = overlayController
+            if (controller != null) {
+                controller.showOverlay()
+            } else {
+                val intent = packageManager.getLaunchIntentForPackage(packageName)
+                if (intent != null) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -27,6 +142,7 @@ class ErrandAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(TAG, "Accessibility Service Connected")
+        startWakeWordListening()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -39,6 +155,7 @@ class ErrandAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopWakeWordListening()
         instance = null
     }
 

@@ -500,23 +500,90 @@ Respond with JSON only. No markdown.
             .post(gson.toJson(jsonRequest).toRequestBody(mediaType))
             .build()
 
-        sharedClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Unexpected HTTP code: $response")
-            }
-            val body = response.body?.string() ?: throw IOException("Empty response body")
-            val jsonObject = gson.fromJson(body, JsonObject::class.java)
-            val candidates = jsonObject.getAsJsonArray("candidates")
-            if (candidates != null && candidates.size() > 0) {
-                val candidate = candidates.get(0).asJsonObject
-                val content = candidate.getAsJsonObject("content")
-                val parts = content.getAsJsonArray("parts")
-                if (parts != null && parts.size() > 0) {
-                    val text = parts.get(0).asJsonObject.get("text").asString
-                    return gson.fromJson(text, JsonObject::class.java)
+        try {
+            sharedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Unexpected HTTP code: $response")
+                }
+                val body = response.body?.string() ?: throw IOException("Empty response body")
+                val jsonObject = gson.fromJson(body, JsonObject::class.java)
+                val candidates = jsonObject.getAsJsonArray("candidates")
+                if (candidates != null && candidates.size() > 0) {
+                    val candidate = candidates.get(0).asJsonObject
+                    val content = candidate.getAsJsonObject("content")
+                    val parts = content.getAsJsonArray("parts")
+                    if (parts != null && parts.size() > 0) {
+                        val text = parts.get(0).asJsonObject.get("text").asString
+                        return gson.fromJson(text, JsonObject::class.java)
+                    }
                 }
             }
-            return null
+        } catch (e: Exception) {
+            Log.e("AgentReasoningLoop", "Primary model failed: ${e.message}. Trying fallback models...", e)
+            return fetchAndTryOtherModels(prompt, apiKey, jsonRequest, mediaType)
         }
+        return null
+    }
+
+    private fun fetchAndTryOtherModels(
+        prompt: String,
+        apiKey: String,
+        jsonRequest: JsonObject,
+        mediaType: okhttp3.MediaType
+    ): JsonObject? {
+        val listUrl = "https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey"
+        val request = Request.Builder().url(listUrl).get().build()
+        try {
+            sharedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                val jsonObject = gson.fromJson(body, JsonObject::class.java)
+                val modelsArray = jsonObject.getAsJsonArray("models") ?: return null
+                
+                for (modelElement in modelsArray) {
+                    val modelObj = modelElement.asJsonObject
+                    val modelName = modelObj.get("name")?.asString ?: continue
+                    val methods = modelObj.getAsJsonArray("supportedGenerationMethods") ?: continue
+                    
+                    var supportsGenerateContent = false
+                    for (method in methods) {
+                        if (method.asString == "generateContent") {
+                            supportsGenerateContent = true
+                            break
+                        }
+                    }
+                    if (supportsGenerateContent && !modelName.contains("embedding") && !modelName.contains("aqa")) {
+                        val tryUrl = "https://generativelanguage.googleapis.com/v1beta/$modelName:generateContent?key=$apiKey"
+                        val tryRequest = Request.Builder()
+                            .url(tryUrl)
+                            .post(gson.toJson(jsonRequest).toRequestBody(mediaType))
+                            .build()
+                        try {
+                            sharedClient.newCall(tryRequest).execute().use { tryResponse ->
+                                if (tryResponse.isSuccessful) {
+                                    val tryBody = tryResponse.body?.string() ?: return@use
+                                    val tryJson = gson.fromJson(tryBody, JsonObject::class.java)
+                                    val candidates = tryJson.getAsJsonArray("candidates")
+                                    if (candidates != null && candidates.size() > 0) {
+                                        val candidate = candidates.get(0).asJsonObject
+                                        val content = candidate.getAsJsonObject("content")
+                                        val parts = content.getAsJsonArray("parts")
+                                        if (parts != null && parts.size() > 0) {
+                                            val text = parts.get(0).asJsonObject.get("text").asString
+                                            return gson.fromJson(text, JsonObject::class.java)
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (ex: Exception) {
+                            Log.e("AgentReasoningLoop", "Fallback model $modelName failed: ${ex.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AgentReasoningLoop", "Failed to list models: ${e.message}")
+        }
+        return null
     }
 }

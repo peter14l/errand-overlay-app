@@ -32,6 +32,7 @@ jobs:
       run: |
         mkdir -p app/src/main/assets
         echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > app/src/main/assets/env
+        echo "MODEL_NAME=${{ secrets.MODEL_NAME }}" >> app/src/main/assets/env
 
     - name: Build with Gradle
       run: ./gradlew assembleDebug

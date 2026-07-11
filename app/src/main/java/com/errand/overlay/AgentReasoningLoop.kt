@@ -93,6 +93,7 @@ class AgentReasoningLoop(private val context: Context) {
     @Volatile private var isPaused = false
     private val pauseLock = Object()
     @Volatile private var userAnswer: String? = null
+    @Volatile private var primaryModelRateLimited = false
 
     fun setCallback(callback: Callback) {
         this.callback = callback
@@ -102,6 +103,7 @@ class AgentReasoningLoop(private val context: Context) {
         if (isRunning) return
         isRunning = true
         isPaused = false
+        primaryModelRateLimited = false
         Thread {
             runLoop(userRequest, geminiApiKey)
         }.start()
@@ -494,48 +496,61 @@ Respond with JSON only. No markdown.
     }
 
     private fun queryOpenRouter(prompt: String, apiKey: String, modelName: String): JsonObject? {
-        val url = "https://openrouter.ai/api/v1/chat/completions"
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val selectedModel = modelName.ifBlank { "google/gemma-2-9b-it:free" }
-
-        val jsonRequest = JsonObject().apply {
-            addProperty("model", selectedModel)
-            val messages = JsonArray().apply {
-                add(JsonObject().apply {
-                    addProperty("role", "user")
-                    addProperty("content", prompt)
-                })
-            }
-            add("messages", messages)
-            addProperty("temperature", 0.2)
+        val selectedModel = modelName.ifBlank { "openrouter/free" }
+        val modelsToTry = mutableListOf<String>()
+        if (selectedModel != "openrouter/free" && !primaryModelRateLimited) {
+            modelsToTry.add(selectedModel)
         }
+        modelsToTry.add("openrouter/free")
 
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $apiKey")
-            .header("HTTP-Referer", "https://github.com/peter14l/errand-overlay-app")
-            .header("X-Title", "Errand Overlay App")
-            .post(gson.toJson(jsonRequest).toRequestBody(mediaType))
-            .build()
+        for (model in modelsToTry) {
+            val url = "https://openrouter.ai/api/v1/chat/completions"
+            val mediaType = "application/json; charset=utf-8".toMediaType()
 
-        try {
-            sharedClient.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: throw IOException("Empty response body")
-                if (!response.isSuccessful) {
-                    throw IOException("HTTP ${response.code}: $body")
+            val jsonRequest = JsonObject().apply {
+                addProperty("model", model)
+                val messages = JsonArray().apply {
+                    add(JsonObject().apply {
+                        addProperty("role", "user")
+                        addProperty("content", prompt)
+                    })
                 }
-                val jsonObject = gson.fromJson(body, JsonObject::class.java)
-                val choices = jsonObject.getAsJsonArray("choices")
-                if (choices != null && choices.size() > 0) {
-                    val choice = choices.get(0).asJsonObject
-                    val message = choice.getAsJsonObject("message")
-                    val content = message.get("content")?.asString ?: ""
-                    val cleanedContent = cleanJsonResponse(content)
-                    return gson.fromJson(cleanedContent, JsonObject::class.java)
-                }
+                add("messages", messages)
+                addProperty("temperature", 0.2)
             }
-        } catch (e: Exception) {
-            Log.e("AgentReasoningLoop", "OpenRouter call failed: ${e.message}", e)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $apiKey")
+                .header("HTTP-Referer", "https://github.com/peter14l/errand-overlay-app")
+                .header("X-Title", "Errand Overlay App")
+                .post(gson.toJson(jsonRequest).toRequestBody(mediaType))
+                .build()
+
+            try {
+                sharedClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: throw IOException("Empty response body")
+                    if (!response.isSuccessful) {
+                        Log.w("AgentReasoningLoop", "OpenRouter model $model failed with code ${response.code}: $body")
+                        if (model == selectedModel && response.code == 429) {
+                            primaryModelRateLimited = true
+                            Log.i("AgentReasoningLoop", "Primary model $model is rate limited. Bypassing permanently for this run.")
+                        }
+                        return@use // try next model
+                    }
+                    val jsonObject = gson.fromJson(body, JsonObject::class.java)
+                    val choices = jsonObject.getAsJsonArray("choices")
+                    if (choices != null && choices.size() > 0) {
+                        val choice = choices.get(0).asJsonObject
+                        val message = choice.getAsJsonObject("message")
+                        val content = message.get("content")?.asString ?: ""
+                        val cleanedContent = cleanJsonResponse(content)
+                        return gson.fromJson(cleanedContent, JsonObject::class.java)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AgentReasoningLoop", "Error querying OpenRouter model $model: ${e.message}", e)
+            }
         }
         return null
     }

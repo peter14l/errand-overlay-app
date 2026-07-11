@@ -140,7 +140,11 @@ class AgentReasoningLoop(private val context: Context) {
                 val domainHint = DOMAIN_HINTS[appName] ?: "You are on app: $appName. Explore the UI to complete the task."
                 val prompt = buildPrompt(userRequest, appName, domainHint, screenText, history)
 
-                val nextAction = queryGemini(prompt, apiKey) ?: break
+                val nextAction = queryGemini(prompt, apiKey)
+                if (nextAction == null) {
+                    mainHandler.post { callback?.onError("Gemini returned empty response. Check API key and network.") }
+                    break
+                }
                 val thought = nextAction.get("thought")?.asString ?: ""
                 val action = nextAction.get("action")?.asString ?: "fail"
                 val pillText = nextAction.get("pillText")?.asString ?: "Thinking..."

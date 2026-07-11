@@ -271,7 +271,16 @@ class ErrandOverlayController(private val context: Context) {
         currentPillText.value = "Thinking..."
         setOverlayMode(false) // full overlay during thinking
 
-        val geminiKey = dotenv["GEMINI_API_KEY"] ?: ""
+        val geminiKey = try {
+            dotenv["GEMINI_API_KEY"]
+        } catch (_: Exception) {
+            ""
+        }
+        if (geminiKey.isBlank()) {
+            currentState.value = "Error"
+            currentPillText.value = "No API key. Add GEMINI_API_KEY to assets/env."
+            return
+        }
 
         reasoningLoop = AgentReasoningLoop(context).apply {
             setCallback(object : AgentReasoningLoop.Callback {
@@ -288,15 +297,9 @@ class ErrandOverlayController(private val context: Context) {
 
                 override fun onError(error: String) {
                     mainHandler.post {
-                        currentState.value = "Idle"
-                        currentPillText.value = "Error: $error"
-                        setOverlayMode(false)
-                        // Auto-clear error after 4s
-                        mainHandler.postDelayed({
-                            if (currentState.value == "Idle" && currentPillText.value.startsWith("Error")) {
-                                currentPillText.value = "Ready"
-                            }
-                        }, 4000)
+                        currentState.value = "Error"
+                        currentPillText.value = error
+                        // Keep full overlay so user can read error + press × to dismiss
                     }
                 }
 
@@ -365,13 +368,18 @@ fun ErrandOverlayApp() {
     )
 
     val showGlow = state != "Idle"
+    val isError = state == "Error"
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Soft edge glow — the only visual during active states
         if (showGlow) EdgeGlow(glowColor = glowColor)
 
-        when (state) {
-            "Idle" -> IdleBar(
+        when {
+            isError -> ErrorOverlay(
+                errorText = pillText,
+                onDismiss = { controller.stopAgent() }
+            )
+            state == "Idle" -> IdleBar(
                 isListening = isListening,
                 recognizedText = recognizedText,
                 onClose = { controller.hideOverlay() },
@@ -483,6 +491,39 @@ fun EdgeGlow(glowColor: Color) {
                 )
             }
     )
+}
+
+// ── Error overlay — keeps the screen alive so the user can read it ─
+
+@Composable
+fun ErrorOverlay(errorText: String, onDismiss: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        // Dismiss × top-right
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 40.dp, end = 20.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.3f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("\u2715", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        }
+
+        // Error message — centered, no card, just text on transparent bg
+        Text(
+            text = errorText,
+            color = Color(0xFFFF6B6B),
+            fontSize = 15.sp,
+            modifier = Modifier.padding(horizontal = 48.dp),
+            lineHeight = 22.sp
+        )
+    }
 }
 
 // ── Idle bar — transparent screen, floating input at bottom ────────

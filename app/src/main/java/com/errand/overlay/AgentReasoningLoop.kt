@@ -17,7 +17,7 @@ class AgentReasoningLoop(private val context: Context) {
 
     companion object {
         private const val MAX_STEPS = 30
-        private const val MAX_HISTORY_ENTRIES = 20
+        private const val MAX_HISTORY_ENTRIES = 5
         private val sharedClient = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -69,6 +69,16 @@ class AgentReasoningLoop(private val context: Context) {
 
     private val gson = Gson()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val dotenv = try {
+        io.github.cdimascio.dotenv.dotenv {
+            directory = "/assets"
+            filename = "env"
+            ignoreIfMalformed = true
+            ignoreIfMissing = true
+        }
+    } catch (e: Exception) {
+        null
+    }
 
     interface Callback {
         fun onStateChanged(state: String, pillText: String)
@@ -202,9 +212,9 @@ class AgentReasoningLoop(private val context: Context) {
                 val domainHint = DOMAIN_HINTS[appName] ?: "You are on app: $appName. Explore the UI to complete the task."
                 val prompt = buildPrompt(userRequest, appName, domainHint, screenText, history)
 
-                val nextAction = queryGemini(prompt, apiKey)
+                val nextAction = queryModel(prompt, apiKey)
                 if (nextAction == null) {
-                    mainHandler.post { callback?.onError("Gemini returned empty response. Check API key and network.") }
+                    mainHandler.post { callback?.onError("Model returned empty response. Check API key and network.") }
                     break
                 }
                 val thought = nextAction.get("thought")?.asString ?: ""
@@ -474,8 +484,67 @@ Respond with JSON only. No markdown.
         return if (prefs.isEmpty()) "none stated — use app's default ranking" else prefs.joinToString("; ")
     }
 
-    private fun queryGemini(prompt: String, apiKey: String): JsonObject? {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+    private fun queryModel(prompt: String, apiKey: String): JsonObject? {
+        val modelName = try { dotenv?.get("MODEL_NAME") ?: "" } catch (e: Exception) { "" }
+        return if (apiKey.startsWith("sk-or-")) {
+            queryOpenRouter(prompt, apiKey, modelName)
+        } else {
+            queryGemini(prompt, apiKey, modelName)
+        }
+    }
+
+    private fun queryOpenRouter(prompt: String, apiKey: String, modelName: String): JsonObject? {
+        val url = "https://openrouter.ai/api/v1/chat/completions"
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val selectedModel = modelName.ifBlank { "google/gemma-2-9b-it:free" }
+
+        val jsonRequest = JsonObject().apply {
+            addProperty("model", selectedModel)
+            val messages = JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("role", "user")
+                    addProperty("content", prompt)
+                })
+            }
+            add("messages", messages)
+            add("response_format", JsonObject().apply {
+                addProperty("type", "json_object")
+            })
+            addProperty("temperature", 0.2)
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $apiKey")
+            .header("HTTP-Referer", "https://github.com/peter14l/errand-overlay-app")
+            .header("X-Title", "Errand Overlay App")
+            .post(gson.toJson(jsonRequest).toRequestBody(mediaType))
+            .build()
+
+        try {
+            sharedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Unexpected HTTP code: $response")
+                }
+                val body = response.body?.string() ?: throw IOException("Empty response body")
+                val jsonObject = gson.fromJson(body, JsonObject::class.java)
+                val choices = jsonObject.getAsJsonArray("choices")
+                if (choices != null && choices.size() > 0) {
+                    val choice = choices.get(0).asJsonObject
+                    val message = choice.getAsJsonObject("message")
+                    val content = message.get("content")?.asString ?: ""
+                    return gson.fromJson(content, JsonObject::class.java)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AgentReasoningLoop", "OpenRouter call failed: ${e.message}", e)
+        }
+        return null
+    }
+
+    private fun queryGemini(prompt: String, apiKey: String, modelOverride: String): JsonObject? {
+        val selectedModel = modelOverride.ifBlank { "gemini-1.5-flash" }
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent?key=$apiKey"
         val mediaType = "application/json; charset=utf-8".toMediaType()
 
         val jsonRequest = JsonObject().apply {

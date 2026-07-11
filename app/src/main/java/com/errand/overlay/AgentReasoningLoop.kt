@@ -507,9 +507,6 @@ Respond with JSON only. No markdown.
                 })
             }
             add("messages", messages)
-            add("response_format", JsonObject().apply {
-                addProperty("type", "json_object")
-            })
             addProperty("temperature", 0.2)
         }
 
@@ -523,17 +520,18 @@ Respond with JSON only. No markdown.
 
         try {
             sharedClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("Unexpected HTTP code: $response")
-                }
                 val body = response.body?.string() ?: throw IOException("Empty response body")
+                if (!response.isSuccessful) {
+                    throw IOException("HTTP ${response.code}: $body")
+                }
                 val jsonObject = gson.fromJson(body, JsonObject::class.java)
                 val choices = jsonObject.getAsJsonArray("choices")
                 if (choices != null && choices.size() > 0) {
                     val choice = choices.get(0).asJsonObject
                     val message = choice.getAsJsonObject("message")
                     val content = message.get("content")?.asString ?: ""
-                    return gson.fromJson(content, JsonObject::class.java)
+                    val cleanedContent = cleanJsonResponse(content)
+                    return gson.fromJson(cleanedContent, JsonObject::class.java)
                 }
             }
         } catch (e: Exception) {
@@ -583,7 +581,8 @@ Respond with JSON only. No markdown.
                     val parts = content.getAsJsonArray("parts")
                     if (parts != null && parts.size() > 0) {
                         val text = parts.get(0).asJsonObject.get("text").asString
-                        return gson.fromJson(text, JsonObject::class.java)
+                        val cleanedText = cleanJsonResponse(text)
+                        return gson.fromJson(cleanedText, JsonObject::class.java)
                     }
                 }
             }
@@ -592,6 +591,19 @@ Respond with JSON only. No markdown.
             return fetchAndTryOtherModels(prompt, apiKey, jsonRequest, mediaType)
         }
         return null
+    }
+
+    private fun cleanJsonResponse(rawText: String): String {
+        var cleanText = rawText.trim()
+        if (cleanText.startsWith("```json")) {
+            cleanText = cleanText.substringAfter("```json")
+        } else if (cleanText.startsWith("```")) {
+            cleanText = cleanText.substringAfter("```")
+        }
+        if (cleanText.endsWith("```")) {
+            cleanText = cleanText.substringBeforeLast("```")
+        }
+        return cleanText.trim()
     }
 
     private fun fetchAndTryOtherModels(

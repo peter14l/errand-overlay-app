@@ -475,7 +475,7 @@ Respond with JSON only. No markdown.
     }
 
     private fun queryGemini(prompt: String, apiKey: String): JsonObject? {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
         val mediaType = "application/json; charset=utf-8".toMediaType()
 
         val jsonRequest = JsonObject().apply {

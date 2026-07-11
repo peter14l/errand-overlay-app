@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
+import android.graphics.RenderEffect
+import android.graphics.RenderNode
+import android.graphics.Shader
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -37,6 +40,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -54,6 +59,20 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.cdimascio.dotenv.dotenv
+
+// ── Blur modifier — API 31+ gets real blur, older gets dark fallback ─
+
+fun Modifier.backgroundBlur(radius: Float = 20f): Modifier = this.then(
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Modifier.graphicsLayer {
+            renderEffect = RenderEffect
+                .createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+                .asComposeRenderEffect()
+        }
+    } else {
+        Modifier // no blur on older APIs, dark bg handles it
+    }
+)
 
 
 class MyLifecycleOwner : LifecycleOwner {
@@ -124,10 +143,15 @@ class ErrandOverlayController(private val context: Context) {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                blurBehindRadius = 20
+            }
         }
         windowParams = params
 
@@ -598,6 +622,7 @@ fun AskUserOverlay(
                 .height(56.dp)
                 .shadow(16.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
+                .backgroundBlur(24f)
                 .background(Color.Black.copy(alpha = 0.45f))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
                 .padding(start = 16.dp, end = 8.dp),
@@ -692,6 +717,7 @@ fun IdleBar(
                 .height(56.dp)
                 .shadow(16.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
+                .backgroundBlur(24f)
                 .background(Color.Black.copy(alpha = 0.45f))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(28.dp))
                 .padding(start = 4.dp, end = 8.dp),
@@ -799,6 +825,7 @@ fun FloatingCapsule(
                 .height(44.dp)
                 .shadow(16.dp, RoundedCornerShape(22.dp))
                 .clip(RoundedCornerShape(22.dp))
+                .backgroundBlur(20f)
                 .background(Color.Black.copy(alpha = 0.55f))
                 .padding(start = 14.dp, end = 6.dp, top = 0.dp, bottom = 0.dp),
             verticalAlignment = Alignment.CenterVertically,

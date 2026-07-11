@@ -213,10 +213,12 @@ class ErrandOverlayController(private val context: Context) {
             params.width = WindowManager.LayoutParams.WRAP_CONTENT
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
             params.gravity = Gravity.TOP or Gravity.END
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         } else {
             params.width = WindowManager.LayoutParams.MATCH_PARENT
             params.height = WindowManager.LayoutParams.MATCH_PARENT
             params.gravity = Gravity.TOP or Gravity.START
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         }
         try {
             windowManager.updateViewLayout(view, params)
@@ -294,7 +296,7 @@ class ErrandOverlayController(private val context: Context) {
         activeRequest.value = request
         currentState.value = "Thinking"
         currentPillText.value = "Thinking..."
-        setOverlayMode(false) // full overlay during thinking
+        setOverlayMode(true) // Minimal overlay during thinking
 
         val geminiKey = try {
             dotenv["GEMINI_API_KEY"]
@@ -313,9 +315,11 @@ class ErrandOverlayController(private val context: Context) {
                     mainHandler.post {
                         currentState.value = state
                         currentPillText.value = pillText
-                        // Recede to minimal pill during Acting
-                        if (state == "Acting") {
+                        // Recede to minimal pill during Acting and Thinking
+                        if (state == "Acting" || state == "Thinking") {
                             setOverlayMode(true)
+                        } else {
+                            setOverlayMode(false)
                         }
                     }
                 }
@@ -371,7 +375,7 @@ class ErrandOverlayController(private val context: Context) {
     fun resumeAfterPayment() {
         currentState.value = "Thinking"
         currentPillText.value = "Resuming..."
-        setOverlayMode(false)
+        setOverlayMode(true)
         reasoningLoop?.resumeAfterPayment()
     }
 
@@ -379,7 +383,7 @@ class ErrandOverlayController(private val context: Context) {
         currentState.value = "Thinking"
         currentPillText.value = "Thinking..."
         askQuestion.value = ""
-        setOverlayMode(false)
+        setOverlayMode(true)
         reasoningLoop?.answerUser(answer)
     }
 }
@@ -412,10 +416,13 @@ fun ErrandOverlayApp() {
     val isError = state == "Error"
     val isAskUser = state == "AskUser"
     val questionText by controller.askQuestion
+    val isMinimal = state == "Thinking" || state == "Acting" || state == "PaymentHandoff"
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Soft edge glow — the only visual during active states
-        if (showGlow) EdgeGlow(glowColor = glowColor)
+    Box(
+        modifier = if (isMinimal) Modifier.wrapContentSize() else Modifier.fillMaxSize()
+    ) {
+        // Soft edge glow — the only visual during active states, but only in full screen mode to avoid constraining
+        if (showGlow && !isMinimal) EdgeGlow(glowColor = glowColor)
 
         when {
             isError -> ErrorOverlay(
@@ -815,59 +822,54 @@ fun FloatingCapsule(
         else -> Color.Gray
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.BottomCenter
+    Row(
+        modifier = Modifier
+            .padding(top = 40.dp, end = 16.dp)
+            .height(44.dp)
+            .shadow(16.dp, RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(22.dp))
+            .backgroundBlur(20f)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(start = 14.dp, end = 6.dp, top = 0.dp, bottom = 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(bottom = 28.dp)
-                .height(44.dp)
-                .shadow(16.dp, RoundedCornerShape(22.dp))
-                .clip(RoundedCornerShape(22.dp))
-                .backgroundBlur(20f)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .padding(start = 14.dp, end = 6.dp, top = 0.dp, bottom = 0.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Mini waveform
-            MiniWaveform(color = accent, isActive = state != "Complete")
+        // Mini waveform
+        MiniWaveform(color = accent, isActive = state != "Complete")
 
-            Text(
-                text = pillText,
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Normal,
-                maxLines = 1,
-                modifier = Modifier.widthIn(max = 160.dp)
-            )
+        Text(
+            text = pillText,
+            color = Color.White.copy(alpha = 0.85f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            modifier = Modifier.widthIn(max = 160.dp)
+        )
 
-            if (state == "PaymentHandoff") {
-                Box(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(15.dp))
-                        .background(Color(0xFF80FFB4).copy(alpha = 0.85f))
-                        .clickable { onPaymentDone() }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Done", color = Color(0xFF0D0096), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
-            }
-
-            // Stop — tiny ×
+        if (state == "PaymentHandoff") {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .clickable { onStop() },
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(Color(0xFF80FFB4).copy(alpha = 0.85f))
+                    .clickable { onPaymentDone() }
+                    .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("\u2715", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+                Text("Done", color = Color(0xFF0D0096), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
+        }
+
+        // Stop — tiny ×
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.08f))
+                .clickable { onStop() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("\u2715", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
         }
     }
 }

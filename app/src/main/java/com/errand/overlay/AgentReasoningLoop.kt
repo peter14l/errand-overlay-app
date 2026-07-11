@@ -24,21 +24,25 @@ class AgentReasoningLoop(private val context: Context) {
             .build()
 
         private val KNOWN_APPS = mapOf(
+            "in.swiggy.android" to "Swiggy",
             "com.Swiggy.agent" to "Swiggy",
             "in.swiggy.agent" to "Swiggy",
             "com.Swiggy" to "Swiggy",
+            "com.application.zomato" to "Zomato",
             "com.zomato.agent" to "Zomato",
             "com.zomato" to "Zomato",
+            "com.zeptonow.android" to "Zepto",
             "com.zepto" to "Zepto",
+            "net.grofers.customer" to "Blinkit",
             "com.blinkit" to "Blinkit"
         )
 
-        // Reverse map: friendly name → package name (for launching)
+        // Reverse map: friendly name → package names (for launching variants)
         private val APP_PACKAGES = mapOf(
-            "Swiggy" to "com.Swiggy",
-            "Zomato" to "com.zomato",
-            "Zepto" to "com.zepto",
-            "Blinkit" to "com.blinkit"
+            "Swiggy" to listOf("in.swiggy.android", "in.swiggy.agent", "com.Swiggy.agent", "com.Swiggy"),
+            "Zomato" to listOf("com.application.zomato", "com.zomato.agent", "com.zomato"),
+            "Zepto" to listOf("com.zeptonow.android", "com.zepto"),
+            "Blinkit" to listOf("net.grofers.customer", "com.blinkit")
         )
 
         // Keywords in user request → target app
@@ -133,9 +137,15 @@ class AgentReasoningLoop(private val context: Context) {
                     mainHandler.post { callback?.onStateChanged("Thinking", "Opening $targetApp...") }
                     service.performHome()
                     Thread.sleep(800)
-                    val pkg = APP_PACKAGES[targetApp]
-                    if (pkg != null) {
-                        service.launchApp(pkg)
+                    val pkgs = APP_PACKAGES[targetApp] ?: emptyList()
+                    var launched = false
+                    for (pkg in pkgs) {
+                        if (service.launchApp(pkg)) {
+                            launched = true
+                            break
+                        }
+                    }
+                    if (launched) {
                         Thread.sleep(3000) // wait for app to load
                     }
                 }
@@ -294,7 +304,20 @@ class AgentReasoningLoop(private val context: Context) {
                     }
                     "launch_app" -> {
                         val pkg = nextAction.get("package")?.asString ?: ""
-                        success = service.launchApp(pkg)
+                        val appName = KNOWN_APPS[pkg]
+                        if (appName != null) {
+                            val pkgs = APP_PACKAGES[appName] ?: listOf(pkg)
+                            var launched = false
+                            for (p in pkgs) {
+                                if (service.launchApp(p)) {
+                                    launched = true
+                                    break
+                                }
+                            }
+                            success = launched
+                        } else {
+                            success = service.launchApp(pkg)
+                        }
                     }
                     "long_click" -> {
                         val index = nextAction.get("index")?.asInt ?: -1
